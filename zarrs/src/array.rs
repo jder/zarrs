@@ -80,7 +80,7 @@ pub use crate::metadata::v3::{
 pub use crate::metadata::{
     ArrayMetadata, ArrayShape, ChunkShape, DataTypeSize, DimensionName, Endianness,
 };
-use zarrs_metadata_ext::v2_to_v3::ArrayMetadataV2ToV3Error;
+use zarrs_metadata_ext::v2_to_v3::{array_metadata_v2_to_superset, ArrayMetadataV2ToV3Error};
 
 pub use chunk_cache::array_chunk_cache_ext_sync::ArrayChunkCacheExt;
 pub use chunk_cache::{
@@ -398,51 +398,57 @@ impl<TStorage: ?Sized> Array<TStorage> {
         let path = NodePath::new(path)?;
 
         // Convert V2 metadata to V3 if it is a compatible subset
-        let metadata_v3 = {
+        let metadata_superset = {
             let config = global_config();
             match &metadata {
-                ArrayMetadata::V3(v3) => Ok(v3.clone()),
-                ArrayMetadata::V2(v2) => array_metadata_v2_to_v3(
+                ArrayMetadata::V3(v3) => v3.clone().into(),
+                ArrayMetadata::V2(v2) => array_metadata_v2_to_superset(
                     v2,
                     config.codec_aliases_v2(),
                     config.codec_aliases_v3(),
                     config.data_type_aliases_v2(),
                     config.data_type_aliases_v3(),
                 )
-                .map_err(|err| ArrayCreateError::UnsupportedZarrV2Array(err.to_string())),
-            }?
+                .map_err(|err| ArrayCreateError::UnsupportedZarrV2Array(err.to_string()))?,
+            }
         };
 
         let data_type = DataType::from_metadata(
-            &metadata_v3.data_type,
+            &metadata_superset.data_type,
             global_config().data_type_aliases_v3(),
         )
         .map_err(ArrayCreateError::DataTypeCreateError)?;
-        let chunk_grid = ChunkGrid::from_metadata(&metadata_v3.chunk_grid)
+        let chunk_grid = ChunkGrid::from_metadata(&metadata_superset.chunk_grid)
             .map_err(ArrayCreateError::ChunkGridCreateError)?;
-        if chunk_grid.dimensionality() != metadata_v3.shape.len() {
+        if chunk_grid.dimensionality() != metadata_superset.shape.len() {
             return Err(ArrayCreateError::InvalidChunkGridDimensionality(
                 chunk_grid.dimensionality(),
-                metadata_v3.shape.len(),
+                metadata_superset.shape.len(),
             ));
         }
-        let fill_value = data_type
-            .fill_value_from_metadata(&metadata_v3.fill_value)
-            .map_err(ArrayCreateError::InvalidFillValueMetadata)?;
+        let fill_value = match metadata_superset.fill_value {
+            Some(fill_value) => data_type
+                .fill_value_from_metadata(&fill_value)
+                .map_err(ArrayCreateError::InvalidFillValueMetadata)?,
+            None => data_type
+                .default_fill_value()
+                .map_err(ArrayCreateError::NoDefaultFillValue)?,
+        };
         let codecs = Arc::new(
-            CodecChain::from_metadata(&metadata_v3.codecs)
+            CodecChain::from_metadata(&metadata_superset.codecs)
                 .map_err(ArrayCreateError::CodecsCreateError)?,
         );
         let storage_transformers =
-            StorageTransformerChain::from_metadata(&metadata_v3.storage_transformers, &path)
+            StorageTransformerChain::from_metadata(&metadata_superset.storage_transformers, &path)
                 .map_err(ArrayCreateError::StorageTransformersCreateError)?;
-        let chunk_key_encoding = ChunkKeyEncoding::from_metadata(&metadata_v3.chunk_key_encoding)
-            .map_err(ArrayCreateError::ChunkKeyEncodingCreateError)?;
-        if let Some(dimension_names) = &metadata_v3.dimension_names {
-            if dimension_names.len() != metadata_v3.shape.len() {
+        let chunk_key_encoding =
+            ChunkKeyEncoding::from_metadata(&metadata_superset.chunk_key_encoding)
+                .map_err(ArrayCreateError::ChunkKeyEncodingCreateError)?;
+        if let Some(dimension_names) = &metadata_superset.dimension_names {
+            if dimension_names.len() != metadata_superset.shape.len() {
                 return Err(ArrayCreateError::InvalidDimensionNames(
                     dimension_names.len(),
-                    metadata_v3.shape.len(),
+                    metadata_superset.shape.len(),
                 ));
             }
         }
@@ -456,10 +462,10 @@ impl<TStorage: ?Sized> Array<TStorage> {
             chunk_key_encoding,
             fill_value,
             codecs,
-            // attributes: metadata_v3.attributes,
-            // additional_fields: metadata_v3.additional_fields,
+            // attributes: metadata_superset.attributes,
+            // additional_fields: metadata_superset.additional_fields,
             storage_transformers,
-            dimension_names: metadata_v3.dimension_names,
+            dimension_names: metadata_superset.dimension_names,
             metadata,
         })
     }

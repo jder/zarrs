@@ -1,5 +1,6 @@
 use serde_json::Value;
 use thiserror::Error;
+use zarrs_data_type::DataTypeNoDefaultFillValueError;
 
 use crate::{
     array::data_type::{DataTypeFillValueError, DataTypeFillValueMetadataError},
@@ -32,6 +33,9 @@ pub enum ArrayCreateError {
     /// Invalid fill value metadata.
     #[error(transparent)]
     InvalidFillValueMetadata(#[from] DataTypeFillValueMetadataError),
+    /// No default fill value.
+    #[error(transparent)]
+    NoDefaultFillValue(#[from] DataTypeNoDefaultFillValueError),
     /// Error creating codecs.
     #[error(transparent)]
     CodecsCreateError(PluginCreateError),

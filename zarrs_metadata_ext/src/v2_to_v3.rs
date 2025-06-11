@@ -1,5 +1,6 @@
 //! Zarr V2 to V3 conversion.
 
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
@@ -23,7 +24,7 @@ use zarrs_metadata::{
         GroupMetadataV2, MetadataV2,
     },
     v3::{ArrayMetadataV3, FillValueMetadataV3, GroupMetadataV3, MetadataV3},
-    DataTypeSize, Endianness,
+    ArrayShape, DataTypeSize, DimensionName, Endianness,
 };
 use zarrs_registry::{
     ExtensionAliasesCodecV2, ExtensionAliasesCodecV3, ExtensionAliasesDataTypeV2,
@@ -234,6 +235,32 @@ pub fn codec_metadata_v2_to_v3(
     Ok(codecs)
 }
 
+pub struct ArrayMetadataSuperset {
+    pub data_type: MetadataV3,
+    pub shape: ArrayShape,
+    pub chunk_grid: MetadataV3,
+    pub fill_value: Option<FillValueMetadataV3>,
+    pub codecs: Vec<MetadataV3>,
+    pub chunk_key_encoding: MetadataV3,
+    pub storage_transformers: Vec<MetadataV3>,
+    pub dimension_names: Option<Vec<DimensionName>>,
+}
+
+impl From<ArrayMetadataV3> for ArrayMetadataSuperset {
+    fn from(metadata_v3: ArrayMetadataV3) -> Self {
+        Self {
+            data_type: metadata_v3.data_type,
+            shape: metadata_v3.shape,
+            chunk_grid: metadata_v3.chunk_grid,
+            fill_value: Some(metadata_v3.fill_value),
+            codecs: metadata_v3.codecs,
+            chunk_key_encoding: metadata_v3.chunk_key_encoding,
+            storage_transformers: metadata_v3.storage_transformers,
+            dimension_names: metadata_v3.dimension_names,
+        }
+    }
+}
+
 /// Convert Zarr V2 array metadata to Zarr V3.
 ///
 /// # Errors
@@ -246,7 +273,42 @@ pub fn array_metadata_v2_to_v3(
     data_type_aliases_v2: &ExtensionAliasesDataTypeV2,
     data_type_aliases_v3: &ExtensionAliasesDataTypeV3,
 ) -> Result<ArrayMetadataV3, ArrayMetadataV2ToV3Error> {
-    let shape = array_metadata_v2.shape.clone();
+    let metadata = array_metadata_v2_to_superset(
+        array_metadata_v2,
+        codec_aliases_v2,
+        codec_aliases_v3,
+        data_type_aliases_v2,
+        data_type_aliases_v3,
+    )?;
+
+    let fill_value = metadata.fill_value.ok_or_else(|| {
+        ArrayMetadataV2ToV3Error::UnsupportedFillValue(
+            metadata.data_type.name().to_string(),
+            array_metadata_v2.fill_value.clone(),
+        )
+    })?;
+
+    Ok(ArrayMetadataV3::new(
+        array_metadata_v2.shape.clone(),
+        metadata.chunk_grid,
+        metadata.data_type,
+        fill_value,
+        metadata.codecs,
+    )
+    .with_attributes(array_metadata_v2.attributes.clone())
+    .with_chunk_key_encoding(metadata.chunk_key_encoding)
+    .with_storage_transformers(metadata.storage_transformers)
+    .with_dimension_names(metadata.dimension_names))
+}
+
+#[allow(clippy::too_many_lines)]
+pub fn array_metadata_v2_to_superset(
+    array_metadata_v2: &ArrayMetadataV2,
+    codec_aliases_v2: &ExtensionAliasesCodecV2,
+    codec_aliases_v3: &ExtensionAliasesCodecV3,
+    data_type_aliases_v2: &ExtensionAliasesDataTypeV2,
+    data_type_aliases_v3: &ExtensionAliasesDataTypeV3,
+) -> Result<ArrayMetadataSuperset, ArrayMetadataV2ToV3Error> {
     let chunk_grid = MetadataV3::new_with_serializable_configuration(
         zarrs_registry::chunk_grid::REGULAR.to_string(),
         &RegularChunkGridConfiguration {
@@ -268,7 +330,7 @@ pub fn array_metadata_v2_to_v3(
         ));
     };
 
-    let fill_value = fill_value_metadata_v2_to_v3(&array_metadata_v2.fill_value, &data_type)?;
+    let fill_value = fill_value_metadata_v2_to_v3(&array_metadata_v2.fill_value, &data_type);
 
     let codecs = codec_metadata_v2_to_v3(
         array_metadata_v2.order,
@@ -288,13 +350,16 @@ pub fn array_metadata_v2_to_v3(
         },
     )?;
 
-    let attributes = array_metadata_v2.attributes.clone();
-
-    Ok(
-        ArrayMetadataV3::new(shape, chunk_grid, data_type, fill_value, codecs)
-            .with_attributes(attributes)
-            .with_chunk_key_encoding(chunk_key_encoding),
-    )
+    Ok(ArrayMetadataSuperset {
+        shape: array_metadata_v2.shape.clone(),
+        chunk_grid,
+        data_type,
+        fill_value,
+        codecs,
+        chunk_key_encoding,
+        storage_transformers: vec![],
+        dimension_names: None,
+    })
 }
 
 /// Convert Zarr V2 data type metadata to Zarr V3.
@@ -318,7 +383,7 @@ pub fn data_type_metadata_v2_to_v3(
     }
 }
 
-/// Convert Zarr V2 fill value metadata to Zarr V3.
+/// Convert Zarr V2 fill value metadata to Zarr V3, or None if we should use a default fill value.
 ///
 /// # Errors
 /// Returns a [`ArrayMetadataV2ToV3Error`] if the fill value is not supported for the given data type.
@@ -326,8 +391,8 @@ pub fn data_type_metadata_v2_to_v3(
 pub fn fill_value_metadata_v2_to_v3(
     fill_value: &FillValueMetadataV2,
     data_type: &MetadataV3,
-) -> Result<FillValueMetadataV3, ArrayMetadataV2ToV3Error> {
-    let converted_value = match fill_value {
+) -> Option<FillValueMetadataV3> {
+    let fill_value = match fill_value {
         FillValueMetadataV2::Null => None,
         FillValueMetadataV2::NaN => Some(f32::NAN.into()),
         FillValueMetadataV2::Infinity => Some(f32::INFINITY.into()),
@@ -336,32 +401,21 @@ pub fn fill_value_metadata_v2_to_v3(
         FillValueMetadataV2::String(string) => Some(string.clone().into()),
     };
 
-    // We add some special cases which are supported in v2 but not v3
-    let converted_value = match (data_type.name(), converted_value) {
-        // A missing fill value is "undefined", so we choose something reasonable
-        (name, None) => match name {
-            // Support zarr-python encoded string arrays with a `null` fill value
-            "string" => FillValueMetadataV3::from(""),
-            // Any other null fill value is "undefined"; we pick false/zero
-            "bool" => FillValueMetadataV3::from(false),
-            _ => FillValueMetadataV3::from(0),
-        },
+    match (data_type.name(), fill_value) {
         // Add a special case for `zarr-python` string data with a 0 fill value -> empty string
         ("string", Some(FillValueMetadataV3::Number(n))) if n.as_u64() == Some(0) => {
-            FillValueMetadataV3::from("")
+            Some(FillValueMetadataV3::from(""))
         }
+
         // Map a 0/1 scalar fill value to a bool
         ("bool", Some(FillValueMetadataV3::Number(n))) if n.as_u64() == Some(0) => {
-            FillValueMetadataV3::from(false)
+            Some(FillValueMetadataV3::from(false))
         }
         ("bool", Some(FillValueMetadataV3::Number(n))) if n.as_u64() == Some(1) => {
-            FillValueMetadataV3::from(true)
+            Some(FillValueMetadataV3::from(true))
         }
-        // NB this passed-through fill value may be incompatible; we will get errors when creating DataType
-        (_, Some(value)) => value,
-    };
-
-    Ok(converted_value)
+        (_, fill_value) => fill_value,
+    }
 }
 
 #[cfg(test)]

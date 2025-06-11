@@ -18,6 +18,19 @@ impl DataTypeFillValueMetadataError {
     }
 }
 
+/// A data type has no default fill value (for V2 arrays with a null fill value).
+#[derive(Debug, Error)]
+#[error("no default fill value for data type {0} used in zarr v2 array with null fill value")]
+pub struct DataTypeNoDefaultFillValueError(String);
+
+impl DataTypeNoDefaultFillValueError {
+    /// Create a new [`DataTypeNoDefaultFillValueError`].
+    #[must_use]
+    pub fn new(data_type: String) -> Self {
+        Self(data_type)
+    }
+}
+
 /// A data type and fill value incompatibility error.
 #[derive(Debug, Error)]
 #[error("incompatible fill value {1} for data type {0}")]

@@ -9,6 +9,7 @@
 
 use std::{fmt::Debug, mem::discriminant, sync::Arc};
 
+use zarrs_data_type::DataTypeNoDefaultFillValueError;
 pub use zarrs_data_type::{
     DataTypeExtension, DataTypeExtensionBytesCodec, DataTypeExtensionBytesCodecError,
     DataTypeExtensionError, DataTypeExtensionPackBitsCodec, DataTypeFillValueError,
@@ -527,6 +528,47 @@ impl DataType {
             Self::String => Ok(FV::from(fill_value.as_str().ok_or_else(err0)?)),
             Self::Extension(ext) => ext.fill_value(fill_value),
         }
+    }
+
+    pub fn default_fill_value(&self) -> Result<FillValue, DataTypeNoDefaultFillValueError> {
+        Ok(match self {
+            Self::Bool => FillValue::from(false),
+            Self::Int2
+            | Self::Int4
+            | Self::Int8
+            | Self::Int16
+            | Self::Int32
+            | Self::Int64
+            | Self::UInt2
+            | Self::UInt4
+            | Self::UInt8
+            | Self::UInt16
+            | Self::UInt32
+            | Self::UInt64 => FillValue::from(0),
+            Self::Float4E2M1FN
+            | Self::Float6E2M3FN
+            | Self::Float6E3M2FN
+            | Self::Float8E3M4
+            | Self::Float8E4M3
+            | Self::Float8E4M3B11FNUZ
+            | Self::Float8E4M3FNUZ
+            | Self::Float8E5M2
+            | Self::Float8E5M2FNUZ
+            | Self::Float8E8M0FNU => FillValue::from(0.0),
+            Self::BFloat16 | Self::Float16 | Self::Float32 | Self::Float64 => FillValue::from(0.0),
+            Self::ComplexBFloat16
+            | Self::ComplexFloat16
+            | Self::ComplexFloat32
+            | Self::ComplexFloat64
+            | Self::Complex64
+            | Self::Complex128 => FillValue::from(num::complex::Complex::<f64>::new(0.0, 0.0)),
+            Self::RawBits(_) => FillValue::from(Vec::new()),
+            Self::Bytes => FillValue::from(Vec::new()),
+            Self::String => FillValue::from(""),
+            Self::Extension(_) => {
+                return Err(DataTypeNoDefaultFillValueError::new(self.name()));
+            }
+        })
     }
 
     /// Create fill value metadata.
