@@ -235,6 +235,7 @@ pub fn codec_metadata_v2_to_v3(
     Ok(codecs)
 }
 
+/// A superset of Zarr V2 and V3 metadata we can make arrays from.
 pub struct ArrayMetadataSuperset {
     pub data_type: MetadataV3,
     pub shape: ArrayShape,
@@ -301,6 +302,10 @@ pub fn array_metadata_v2_to_v3(
     .with_dimension_names(metadata.dimension_names))
 }
 
+/// Convert Zarr V2 array metadata to a superset of Zarr V2 and V3 metadata we can make arrays from.
+///
+/// # Errors
+/// Returns a [`ArrayMetadataV2ToV3Error`] if the metadata is invalid or is not compatible with our V2 support.
 #[allow(clippy::too_many_lines)]
 pub fn array_metadata_v2_to_superset(
     array_metadata_v2: &ArrayMetadataV2,
