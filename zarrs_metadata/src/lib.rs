@@ -49,15 +49,6 @@ impl ArrayMetadata {
     pub fn to_string_pretty(&self) -> String {
         serde_json::to_string_pretty(self).expect("array metadata is valid JSON")
     }
-
-    /// Return the shape of the array.
-    #[must_use]
-    pub fn shape(&self) -> &[u64] {
-        match self {
-            ArrayMetadata::V3(v3) => &v3.shape,
-            ArrayMetadata::V2(v2) => &v2.shape,
-        }
-    }
 }
 
 impl TryFrom<&str> for ArrayMetadata {
