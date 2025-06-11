@@ -401,6 +401,7 @@ pub fn fill_value_metadata_v2_to_v3(
         FillValueMetadataV2::String(string) => Some(string.clone().into()),
     };
 
+    // TODO: might be cleaner to have a FillValueMetadataSuperset which captures these special cases
     match (data_type.name(), fill_value) {
         // Add a special case for `zarr-python` string data with a 0 fill value -> empty string
         ("string", Some(FillValueMetadataV3::Number(n))) if n.as_u64() == Some(0) => {

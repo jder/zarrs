@@ -533,18 +533,18 @@ impl DataType {
     pub fn default_fill_value(&self) -> Result<FillValue, DataTypeNoDefaultFillValueError> {
         Ok(match self {
             Self::Bool => FillValue::from(false),
-            Self::Int2
-            | Self::Int4
-            | Self::Int8
-            | Self::Int16
-            | Self::Int32
-            | Self::Int64
-            | Self::UInt2
-            | Self::UInt4
-            | Self::UInt8
-            | Self::UInt16
-            | Self::UInt32
-            | Self::UInt64 => FillValue::from(0),
+            Self::Int2 => FillValue::from(0i8),
+            Self::Int4 => FillValue::from(0i8),
+            Self::Int8 => FillValue::from(0i8),
+            Self::Int16 => FillValue::from(0i16),
+            Self::Int32 => FillValue::from(0i32),
+            Self::Int64 => FillValue::from(0i64),
+            Self::UInt2 => FillValue::from(0u8),
+            Self::UInt4 => FillValue::from(0u8),
+            Self::UInt8 => FillValue::from(0u8),
+            Self::UInt16 => FillValue::from(0u16),
+            Self::UInt32 => FillValue::from(0u32),
+            Self::UInt64 => FillValue::from(0u64),
             Self::Float4E2M1FN
             | Self::Float6E2M3FN
             | Self::Float6E3M2FN
@@ -554,15 +554,26 @@ impl DataType {
             | Self::Float8E4M3FNUZ
             | Self::Float8E5M2
             | Self::Float8E5M2FNUZ
-            | Self::Float8E8M0FNU => FillValue::from(0.0),
-            Self::BFloat16 | Self::Float16 | Self::Float32 | Self::Float64 => FillValue::from(0.0),
-            Self::ComplexBFloat16
-            | Self::ComplexFloat16
-            | Self::ComplexFloat32
-            | Self::ComplexFloat64
-            | Self::Complex64
-            | Self::Complex128 => FillValue::from(num::complex::Complex::<f64>::new(0.0, 0.0)),
-            Self::RawBits(_) => FillValue::from(Vec::new()),
+            | Self::Float8E8M0FNU => FillValue::from(vec![0u8]),
+            Self::BFloat16 => FillValue::from(half::bf16::from_f32(0.0)),
+            Self::Float16 => FillValue::from(half::f16::from_f32(0.0)),
+            Self::Float32 => FillValue::from(0.0f32),
+            Self::Float64 => FillValue::from(0.0f64),
+            Self::ComplexBFloat16 => FillValue::from(num::complex::Complex::<half::bf16>::new(
+                half::bf16::from_f32(0.0),
+                half::bf16::from_f32(0.0),
+            )),
+            Self::ComplexFloat16 => FillValue::from(num::complex::Complex::<half::f16>::new(
+                half::f16::from_f32(0.0),
+                half::f16::from_f32(0.0),
+            )),
+            Self::Complex64 | Self::ComplexFloat32 => {
+                FillValue::from(num::complex::Complex32::new(0.0f32, 0.0f32))
+            }
+            Self::Complex128 | Self::ComplexFloat64 => {
+                FillValue::from(num::complex::Complex64::new(0.0f64, 0.0f64))
+            }
+            Self::RawBits(len_bytes) => FillValue::from(vec![0u8; *len_bytes]),
             Self::Bytes => FillValue::from(Vec::new()),
             Self::String => FillValue::from(""),
             Self::Extension(_) => {
@@ -2081,5 +2092,64 @@ mod tests {
             metadata,
             data_type.metadata_fill_value(&fill_value).unwrap()
         );
+    }
+
+    #[test]
+    fn default_fill_value_size_matches_data_type() {
+        let data_types = [
+            DataType::Bool,
+            DataType::Int2,
+            DataType::Int4,
+            DataType::Int8,
+            DataType::Int16,
+            DataType::Int32,
+            DataType::Int64,
+            DataType::UInt2,
+            DataType::UInt4,
+            DataType::UInt8,
+            DataType::UInt16,
+            DataType::UInt32,
+            DataType::UInt64,
+            DataType::Float4E2M1FN,
+            DataType::Float6E2M3FN,
+            DataType::Float6E3M2FN,
+            DataType::Float8E3M4,
+            DataType::Float8E4M3,
+            DataType::Float8E4M3B11FNUZ,
+            DataType::Float8E4M3FNUZ,
+            DataType::Float8E5M2,
+            DataType::Float8E5M2FNUZ,
+            DataType::Float8E8M0FNU,
+            DataType::BFloat16,
+            DataType::Float16,
+            DataType::Float32,
+            DataType::Float64,
+            DataType::ComplexBFloat16,
+            DataType::ComplexFloat16,
+            DataType::ComplexFloat32,
+            DataType::ComplexFloat64,
+            DataType::Complex64,
+            DataType::Complex128,
+            DataType::RawBits(1),
+            DataType::RawBits(2),
+            DataType::RawBits(4),
+            DataType::RawBits(8),
+            DataType::String,
+            DataType::Bytes,
+        ];
+
+        for data_type in &data_types {
+            let fill_value = data_type.default_fill_value().unwrap();
+
+            // For fixed-size data types, verify the fill value size matches the data type size
+            if let Some(data_type_size) = data_type.fixed_size() {
+                assert_eq!(
+                    data_type_size,
+                    fill_value.as_ne_bytes().len(),
+                    "Default fill value size mismatch for data type: {}",
+                    data_type.name()
+                );
+            }
+        }
     }
 }
